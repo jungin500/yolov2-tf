@@ -149,67 +149,29 @@ def yolo_head(feats):
 import tensorflow as tf
 
 def Yolov2Loss(y_true, y_pred):
-    # label_class = y_true[..., :20]      # ? * 7 * 7 * 20
-    # label_box = y_true[..., 20:24]      # ? * 7 * 7 * 4
-    # responsible_mask = y_true[..., 24]  # ? * 7 * 7
-    # responsible_mask = K.expand_dims(responsible_mask)  # ? * 7 * 7 * 1
-
-    # V2
     label_class = y_true[..., :20]        # ? * 13 * 13 * 5 * 20
     responsible_mask = y_true[..., 20]    # ? * 13 * 13 * 5 * 1
     label_box = y_true[..., 21:25]        # ? * 13 * 13 * 5 * 4
     extended_responsible_mask = tf.expand_dims(responsible_mask, axis=4)  # ? * 13 * 13 * 5 * 1 * 1
     d_extended_responsible_mask = tf.expand_dims(extended_responsible_mask, axis=5)  # ? * 13 * 13 * 5 * 1 * 1 * 1
 
-    # predict_class = y_pred[..., :20]  # ? * 7 * 7 * 20
-    # predict_bbox_confidences = y_pred[..., 20:22]  # ? * 7 * 7 * 2
-    # predict_box = y_pred[..., 22:]  # ? * 7 * 7 * 8
-
-    # V2
     predict_class = y_pred[..., :20]  # ? * 13 * 13 * 5 * 20
     predict_bbox_confidences = y_pred[..., 20]  # ? * 13 * 13 * 5 (1개)
     predict_coord = y_pred[..., 21:25]  # ? * 13 * 13 * 5 * 4
 
-    # _label_box = K.reshape(label_box, [-1, 7, 7, 1, 4])  # ? * 7 * 7 * 1 * 4 (4 -> 1 * 4)
-    # _predict_box = K.reshape(predict_box, [-1, 7, 7, 2, 4])  # ? * 7 * 7 * 2 * 4 (8 -> 2 * 4)
-
-    # V2
     _label_box = tf.reshape(label_box, [-1, 13, 13, 5, 1, 4])  # ? * 13 * 13 * 5 * 1 * 4 (4 -> 1 * 4)
     _predict_box = tf.reshape(predict_coord, [-1, 13, 13, 5, 1, 4])  # ? * 13 * 13 * 5 * 1 * 4 (4 -> 1 * 4)
 
-    # label_xy, label_wh = yolo_head(_label_box)  # ? * 7 * 7 * 1 * 2, ? * 7 * 7 * 1 * 2
-    # label_xy = K.expand_dims(label_xy, 3)  # ? * 7 * 7 * 1 * 1 * 2
-    # label_wh = K.expand_dims(label_wh, 3)  # ? * 7 * 7 * 1 * 1 * 2
-    # label_xy_min, label_xy_max = xywh2minmax(label_xy, label_wh)  # ? * 7 * 7 * 1 * 1 * 2, ? * 7 * 7 * 1 * 1 * 2
-
-    # V2
     label_xy, label_wh, _ = yolo_head(_label_box)  # ? * 13 * 13 * 5 * 1 * 2, ? * 13 * 13 * 5 * 1 * 2
     label_xy_min, label_xy_max = xywh2minmax(label_xy, label_wh)  # ? * 13 * 13 * 5 * 1 * 2, ? * 13 * 13 * 5 * 1 * 2
 
-    # predict_xy, predict_wh = yolo_head(_predict_box)  # ? * 7 * 7 * 2 * 2, ? * 7 * 7 * 2 * 2
-    # predict_xy = K.expand_dims(predict_xy, 4)  # ? * 7 * 7 * 2 * 1 * 2
-    # predict_wh = K.expand_dims(predict_wh, 4)  # ? * 7 * 7 * 2 * 1 * 2
-    # predict_xy_min, predict_xy_max = xywh2minmax(predict_xy, predict_wh)  # ? * 7 * 7 * 2 * 1 * 2, ? * 7 * 7 * 2 * 1 * 2
-
-    # V2
     predict_xy, predict_wh, anchor_mask = yolo_head(_predict_box)  # ? * 13 * 13 * 5 * 1 * 2, ? * 13 * 13 * 5 * 1 * 2
-    # predict_xy = K.expand_dims(predict_xy, 5)  # ? * 13 * 13 * 5 * 1 * 1 * 2
-    # predict_wh = K.expand_dims(predict_wh, 5)  # ? * 13 * 13 * 5 * 1 * 1 * 2
     predict_xy_min, predict_xy_max = xywh2minmax(predict_xy, predict_wh)  # ? * 13 * 13 * 5 * 1 * 2, ? * 13 * 13 * 5 * 1 * 2
 
-    # iou_scores = iou(predict_xy_min, predict_xy_max, label_xy_min, label_xy_max)  # ? * 7 * 7 * 2 * 1
-    # best_ious = K.max(iou_scores, axis=4)  # ? * 7 * 7 * 2
-    # best_box = K.max(best_ious, axis=3, keepdims=True)  # ? * 7 * 7 * 1
-
-    # V2
     iou_scores = iou(predict_xy_min, predict_xy_max, label_xy_min, label_xy_max)  # ? * 13 * 13 * 5 * 1
     best_ious = K.max(iou_scores, axis=4)  # ? * 13 * 13 * 5
     best_box = K.max(best_ious, axis=3, keepdims=True)  # ? * 13 * 13 * 1
 
-    # box_mask = K.cast(best_ious >= best_box, K.dtype(best_ious))  # ? * 7 * 7 * 2
-    # extended_box_mask = tf.expand_dims(box_mask, axis=4)  # ? * 7 * 7 * 2 * 1
-
-    # V2
     box_mask = K.cast(best_ious >= best_box, K.dtype(best_ious))  # ? * 13 * 13 * 5
     extended_box_mask = tf.expand_dims(box_mask, axis=4)  # ? * 13 * 13 * 5 * 1
     d_extended_box_mask = tf.expand_dims(extended_box_mask, axis=5)  # ? * 13 * 13 * 5 * 1 * 1
@@ -260,83 +222,5 @@ def Yolov2Loss(y_true, y_pred):
 
     ''' 전체 Loss의 합 '''
     loss = box_loss + confidence_loss + class_loss
-
-    return loss
-
-'''
-    y_true.shape = [7, 7, 25]
-    0  ~ 19 (20) -> one-hot class
-    20 ~ 23 (4)  -> [x, y, w, h]
-    24      (1)  -> response???? responsible mask!
-'''
-
-'''
-    y_pred.shape = [?, 7, 7, 30]
-    0  ~ 19 (20) -> predicted class probability
-    20 ~ 21 (2)  -> predicted trust values (CONFIDENCE!!!)
-    22 ~ 29 (8)  -> predicted bounding boxes [x, y, w, h], [x, y, w, h]
-'''
-def Yolov1Loss(y_true, y_pred):
-    label_class = y_true[..., :20]      # ? * 7 * 7 * 20
-    label_box = y_true[..., 20:24]      # ? * 7 * 7 * 4
-    responsible_mask = y_true[..., 24]  # ? * 7 * 7
-    responsible_mask = K.expand_dims(responsible_mask)  # ? * 7 * 7 * 1
-
-    predict_class = y_pred[..., :20]  # ? * 7 * 7 * 20
-    predict_bbox_confidences = y_pred[..., 20:22]  # ? * 7 * 7 * 2
-    predict_box = y_pred[..., 22:]  # ? * 7 * 7 * 8
-
-    _label_box = K.reshape(label_box, [-1, 7, 7, 1, 4])  # ? * 7 * 7 * 1 * 4 (4 -> 1 * 4)
-    _predict_box = K.reshape(predict_box, [-1, 7, 7, 2, 4])  # ? * 7 * 7 * 2 * 4 (8 -> 2 * 4)
-
-    label_xy, label_wh = yolo_head(_label_box)  # ? * 7 * 7 * 1 * 2, ? * 7 * 7 * 1 * 2
-    label_xy = K.expand_dims(label_xy, 3)  # ? * 7 * 7 * 1 * 1 * 2
-    label_wh = K.expand_dims(label_wh, 3)  # ? * 7 * 7 * 1 * 1 * 2
-    label_xy_min, label_xy_max = xywh2minmax(label_xy, label_wh)  # ? * 7 * 7 * 1 * 1 * 2, ? * 7 * 7 * 1 * 1 * 2
-
-    predict_xy, predict_wh = yolo_head(_predict_box)  # ? * 7 * 7 * 2 * 2, ? * 7 * 7 * 2 * 2
-    predict_xy = K.expand_dims(predict_xy, 4)  # ? * 7 * 7 * 2 * 1 * 2
-    predict_wh = K.expand_dims(predict_wh, 4)  # ? * 7 * 7 * 2 * 1 * 2
-    predict_xy_min, predict_xy_max = xywh2minmax(predict_xy, predict_wh)  # ? * 7 * 7 * 2 * 1 * 2, ? * 7 * 7 * 2 * 1 * 2
-
-    iou_scores = iou(predict_xy_min, predict_xy_max, label_xy_min, label_xy_max)  # ? * 7 * 7 * 2 * 1
-    best_ious = K.max(iou_scores, axis=4)  # ? * 7 * 7 * 2
-    best_box = K.max(best_ious, axis=3, keepdims=True)  # ? * 7 * 7 * 1
-
-    box_mask = K.cast(best_ious >= best_box, K.dtype(best_ious))  # ? * 7 * 7 * 2
-
-    # Loss 함수 4번 (with lambda_noobj 0.5)
-    no_object_loss = 0.5 * (1 - box_mask * responsible_mask) * K.square(0 - predict_bbox_confidences)
-    # Loss 함수 3번 (without lambda_noobj)
-    object_loss = box_mask * responsible_mask * K.square(1 - predict_bbox_confidences)
-
-    confidence_loss = no_object_loss + object_loss
-    confidence_loss = K.sum(confidence_loss)
-
-    # Loss 함수 5번
-    class_loss = responsible_mask * K.square(label_class - predict_class)
-
-    # Loss 함수 5번 총합
-    class_loss = K.sum(class_loss)
-
-    _label_box = K.reshape(label_box, [-1, 7, 7, 1, 4])
-    _predict_box = K.reshape(predict_box, [-1, 7, 7, 2, 4])
-
-    label_xy, label_wh = yolo_head(_label_box)  # ? * 7 * 7 * 1 * 2, ? * 7 * 7 * 1 * 2
-    predict_xy, predict_wh = yolo_head(_predict_box)  # ? * 7 * 7 * 2 * 2, ? * 7 * 7 * 2 * 2
-
-    box_mask = K.expand_dims(box_mask)
-    responsible_mask = K.expand_dims(responsible_mask)
-
-    # Loss 함수 1번
-    box_loss = 5 * box_mask * responsible_mask * K.square((label_xy - predict_xy) / 416)
-
-    # Loss 함수 2번
-    box_loss += 5 * box_mask * responsible_mask * K.square(K.sqrt(label_wh) - K.sqrt(predict_wh)) / 416
-
-    # 1번+2번 총합
-    box_loss = K.sum(box_loss)
-
-    loss = confidence_loss + class_loss + box_loss
 
     return loss

@@ -12,22 +12,6 @@ from YoloLoss import Yolov2Loss
 from YoloModel import Yolov2Model
 from DataGenerator import Yolov2Dataloader
 
-# def convert_yolobbox_tfbbox(yolo_bbox, image_size=448):
-#     """
-#         yolo_bbox
-#         - Shape: [1 * 7 * 7 * 4]
-#         - [x_c, y_c, w, h]
-#
-#         - Output> [1 * 7 * 7 * 4] and [y1, x1, y2, x2]
-#     """
-#     return np.stack([
-#         (yolo_bbox[:, :, :, 1] - yolo_bbox[:, :, :, 3] / 2) * image_size,
-#         (yolo_bbox[:, :, :, 0] - yolo_bbox[:, :, :, 2] / 2) * image_size,
-#         (yolo_bbox[:, :, :, 1] + yolo_bbox[:, :, :, 3] / 2) * image_size,
-#         (yolo_bbox[:, :, :, 0] + yolo_bbox[:, :, :, 2] / 2) * image_size
-#     ], axis=3)
-
-
 # result: 1 * 7 * 7 * 30
 def postprocess_non_nms_result_v2(input_image, network_output):
     classes = network_output[:, :, :, :20]
