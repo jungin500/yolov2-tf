@@ -29,7 +29,21 @@ class Labeler():
         return self.names_list[index]
 
 
-class Dataloader(utils.Sequence):
+# Necessary directives
+ANCHOR_BOXES = [1.19, 1.99, 2.79, 4.60, 4.54, 8.93, 8.06, 5.29, 10.33, 10.65]
+ANCHOR_BOXES = np.array(ANCHOR_BOXES).reshape((-1, 2))
+
+
+def get_best_iou_anchor_idx(width, height):
+    height_ratios = (ANCHOR_BOXES / np.reshape(ANCHOR_BOXES[:, 0], (-1, 1)))[:, 1]
+    current_heights = np.tile(height / width, np.shape(ANCHOR_BOXES)[0])
+
+    height_differences = np.abs(height_ratios - current_heights)
+    return np.argmin(height_differences)
+
+
+class Yolov2Dataloader(utils.Sequence):
+
     DEFAULT_AUGMENTER = iaa.SomeOf(2, [
         iaa.Multiply((1.2, 1.5)),  # change brightness, doesn't affect BBs
         iaa.Affine(
@@ -47,7 +61,7 @@ class Dataloader(utils.Sequence):
         iaa.Sharpen(alpha=0.5)
     ])
 
-    def __init__(self, file_name, dim=(448, 448, 3), batch_size=1, numClass=1, augmentation=False, shuffle=True):
+    def __init__(self, file_name, dim=(416, 416, 3), batch_size=1, numClass=1, augmentation=False, shuffle=True):
         self.image_list, self.label_list = self.GetDataList(file_name)
         self.dim = dim
         self.batch_size = batch_size
@@ -67,10 +81,10 @@ class Dataloader(utils.Sequence):
         batch_x = [self.image_list[k] for k in indexes]
         batch_y = [self.label_list[k] for k in indexes]
 
-        X, y = self.__data_generation(batch_x, batch_y)
+        X, Y = self.__data_generation(batch_x, batch_y)
 
         # 마지막에 [None]을 넣는 것은... 다른 버전에서 동작하지 않는다
-        return np.asarray(X), np.asarray(y)
+        return np.asarray(X), np.asarray(Y)
 
     def on_epoch_end(self):
         'Updates indexes after each epoch'
@@ -88,15 +102,15 @@ class Dataloader(utils.Sequence):
             if not line: break
             train_list.append(line.replace("\n", ""))
             label_text = line.replace(".jpg", ".txt")
-            label_text = label_text.replace(
-                'C:\\Users\\jungin500\\Desktop\\Study\\2020-yolov3-impl\\VOCdevkit\\VOC2007\\JPEGImages\\',
-                "C:\\Users\\jungin500\\Desktop\\Study\\2020-yolov3-impl\\VOCyolo\\")
+            # label_text = label_text.replace(
+            #     'C:\\Users\\jungin500\\Desktop\\Study\\2020-yolov3-impl\\VOCdevkit\\VOC2007\\JPEGImages\\',
+            #     "C:\\Users\\jungin500\\Desktop\\Study\\2020-yolov3-impl\\VOCyolo\\")
             label_text = label_text.replace("\n", "")
             lable_list.append(label_text)
 
         return train_list, lable_list
 
-    def __convert_yololabel_to_iaabbs(self, yolo_raw_label, image_width=448, image_height=448):
+    def __convert_yololabel_to_iaabbs(self, yolo_raw_label):
         # raw_label = [bboxes, 5], np.array([center_x, center_y, w, h, c])
         return ia.BoundingBoxesOnImage([
             ia.BoundingBox(
@@ -107,32 +121,34 @@ class Dataloader(utils.Sequence):
                 # label=class_list[int(yolo_bbox[0])] # Label을 id로 활용하자
                 label=yolo_raw_bbox[4]
             ) for yolo_raw_bbox in yolo_raw_label
-        ], shape=(image_width, image_height))
+        ], shape=(self.dim[0], self.dim[1]))
 
     def __convert_iaabbs_to_yololabel(self, iaa_bbs_out):
-        label = np.zeros((7, 7, 25), dtype=np.float32)
+        label = np.zeros((13, 13, 5, 25), dtype=np.float32)
         raw_label = []
 
         for bbox in iaa_bbs_out.bounding_boxes:
-            center_x = bbox.center_x / 448
-            center_y = bbox.center_y / 448
-            width = bbox.width / 448
-            height = bbox.height / 448
+            center_x = bbox.center_x / self.dim[0]
+            center_y = bbox.center_y / self.dim[1]
+            width = bbox.width / self.dim[0]
+            height = bbox.height / self.dim[1]
             class_id = int(float(bbox.label))  # Explicit
 
-            scale_factor = (1 / 7)
+            anchor_idx = get_best_iou_anchor_idx(width, height)
+
+            scale_factor = (1 / 13)
 
             grid_x_index = int(center_x // scale_factor)
             grid_y_index = int(center_y // scale_factor)
             grid_x_index, grid_y_index = \
                 np.clip([grid_x_index, grid_y_index], a_min=0, a_max=6)
 
-            relative_coord = [center_x * 7, center_y * 7]
+            relative_coord = [center_x * 13, center_y * 13]
             relative_center_x = relative_coord[0] - int(relative_coord[0])
             relative_center_y = relative_coord[1] - int(relative_coord[1])
 
-            label[grid_y_index][grid_x_index][class_id] = 1.
-            label[grid_y_index][grid_x_index][20:] = np.array([relative_center_x, relative_center_y, width, height, 1])
+            label[grid_y_index][grid_x_index][anchor_idx][class_id] = 1.
+            label[grid_y_index][grid_x_index][anchor_idx][20:] = np.array([relative_center_x, relative_center_y, width, height, 1])
 
             raw_label.append(np.array([center_x, center_y, width, height, class_id]))
 
@@ -143,14 +159,14 @@ class Dataloader(utils.Sequence):
         # Initialization
         if self.augmenter:
             X = np.empty((self.batch_size * self.augmenter_size, *self.dim))
-            Y = np.empty((self.batch_size * self.augmenter_size, *(7, 7, 25)))
+            Y = np.empty((self.batch_size * self.augmenter_size, *(13, 13, 5, 25)))
         else:
             X = np.empty((self.batch_size, *self.dim))
-            Y = np.empty((self.batch_size, *(7, 7, 25)))
+            Y = np.empty((self.batch_size, *(13, 13, 5, 25)))
 
         # Generate data
         for i, path in enumerate(list_img_path):
-            original_image = (np.array(Image.open(path).resize((448, 448))) / 255).astype(np.float32)
+            original_image = (np.array(Image.open(path).resize((self.dim[0], self.dim[1]))) / 255).astype(np.float32)
 
             # raw_label은 x_1, y_1, x_2, y_2, c를 가지고 있다.
             label, raw_label = self.GetLabel(list_label_path[i], original_image.shape[0], original_image.shape[1])
@@ -173,7 +189,7 @@ class Dataloader(utils.Sequence):
 
     def GetLabel(self, label_path, img_h, img_w):
         f = open(label_path, 'r')
-        label = np.zeros((7, 7, 25), dtype=np.float32)
+        label = np.zeros((13, 13, 5, 25), dtype=np.float32)
         raw_label = []
         while True:
             line = f.readline()
@@ -192,7 +208,9 @@ class Dataloader(utils.Sequence):
             h = float(h)
             c = int(c)
 
-            scale_factor = (1 / 7)
+            anchor_idx = get_best_iou_anchor_idx(w, h)
+
+            scale_factor = (1 / 13)
 
             # // : 몫
             grid_x_index = int(x // scale_factor)
@@ -200,18 +218,18 @@ class Dataloader(utils.Sequence):
 
             # x, y는 해당 셀 내에서의
             # 상대적 위치를 가지고 간다.
-            grid_idx = [x * 7, y * 7]
+            grid_idx = [x * 13, y * 13]
             x_relative = grid_idx[0] - int(grid_idx[0])
             y_relative = grid_idx[1] - int(grid_idx[1])
 
-            label[grid_y_index][grid_x_index][c] = 1.
-            label[grid_y_index][grid_x_index][20:] = np.array([x_relative, y_relative, w, h, 1])
+            label[grid_y_index][grid_x_index][anchor_idx][c] = 1.
+            label[grid_y_index][grid_x_index][anchor_idx][20:] = np.array([x_relative, y_relative, w, h, 1])
 
             raw_label.append(np.array([
-                int((x - w / 2) * 448),
-                int((y - h / 2) * 448),
-                int((x + w / 2) * 448),
-                int((y + h / 2) * 448),
+                int((x - w / 2) * self.dim[0]),
+                int((y - h / 2) * self.dim[1]),
+                int((x + w / 2) * self.dim[0]),
+                int((y + h / 2) * self.dim[1]),
                 c
             ]))
 

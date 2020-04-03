@@ -8,6 +8,8 @@ __pycache__/
 VOCyolo/
 *.tar.gz
 
+# IntelliJ IDEA
+.idea/
 
 # Created by https://www.gitignore.io/api/git,linux,python,pycharm,windows,jupyternotebooks
 # Edit at https://www.gitignore.io/?templates=git,linux,python,pycharm,windows,jupyternotebooks

@@ -8,29 +8,28 @@ os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
 
 from tensorflow.keras.callbacks import ModelCheckpoint
 from tensorflow.keras.optimizers import Adam
-from YoloLoss import Yolov1Loss
-from YoloModel import Yolov1Model
-from DataGenerator import Dataloader
+from YoloLoss import Yolov2Loss
+from YoloModel import Yolov2Model
+from DataGenerator import Yolov2Dataloader
 
-
-def convert_yolobbox_tfbbox(yolo_bbox, image_size=448):
-    """
-        yolo_bbox
-        - Shape: [1 * 7 * 7 * 4]
-        - [x_c, y_c, w, h]
-
-        - Output> [1 * 7 * 7 * 4] and [y1, x1, y2, x2]
-    """
-    return np.stack([
-        (yolo_bbox[:, :, :, 1] - yolo_bbox[:, :, :, 3] / 2) * image_size,
-        (yolo_bbox[:, :, :, 0] - yolo_bbox[:, :, :, 2] / 2) * image_size,
-        (yolo_bbox[:, :, :, 1] + yolo_bbox[:, :, :, 3] / 2) * image_size,
-        (yolo_bbox[:, :, :, 0] + yolo_bbox[:, :, :, 2] / 2) * image_size
-    ], axis=3)
+# def convert_yolobbox_tfbbox(yolo_bbox, image_size=448):
+#     """
+#         yolo_bbox
+#         - Shape: [1 * 7 * 7 * 4]
+#         - [x_c, y_c, w, h]
+#
+#         - Output> [1 * 7 * 7 * 4] and [y1, x1, y2, x2]
+#     """
+#     return np.stack([
+#         (yolo_bbox[:, :, :, 1] - yolo_bbox[:, :, :, 3] / 2) * image_size,
+#         (yolo_bbox[:, :, :, 0] - yolo_bbox[:, :, :, 2] / 2) * image_size,
+#         (yolo_bbox[:, :, :, 1] + yolo_bbox[:, :, :, 3] / 2) * image_size,
+#         (yolo_bbox[:, :, :, 0] + yolo_bbox[:, :, :, 2] / 2) * image_size
+#     ], axis=3)
 
 
 # result: 1 * 7 * 7 * 30
-def postprocess_non_nms_result(input_image, network_output):
+def postprocess_non_nms_result_v2(input_image, network_output):
     classes = network_output[:, :, :, :20]
     confidence_1, confidence_2 = network_output[:, :, :, 20], network_output[:, :, :, 21]
     bbox_1, bbox_2 = network_output[:, :, :, 22:26], network_output[:, :, :, 26:30]
@@ -93,102 +92,40 @@ def postprocess_non_nms_result(input_image, network_output):
         input_image_pil.show(title="Sample Image")
 
 
-# result: 1 * 7 * 7 * 30
-def postprocess_result(input_image, network_output):
-    classes = network_output[:, :, :, :20]
-    confidence_1, confidence_2 = network_output[:, :, :, 20], network_output[:, :, :, 21]
-    bbox_1, bbox_2 = network_output[:, :, :, 22:26], network_output[:, :, :, 26:30]
-
-    class_score_bbox_1 = np.expand_dims(confidence_1, axis=3) * classes
-    class_score_bbox_2 = np.expand_dims(confidence_2, axis=3) * classes
-    class_scores = np.stack([class_score_bbox_1, class_score_bbox_2], axis=3)  # 1 * 7 * 7 * 2 * 20
-
-    # 문제없이 작동하는 부분
-    class_scores = np.reshape(class_scores, [-1, 20])  # 98(7 * 7 * 2) * 20
-
-    # Set zero if score < thresh1 (0.2)
-    class_scores[np.where(class_scores < thresh1)] = 0.
-
-    return  # invalid return here!
-
-    # for class_id in range(np.shape(class_scores)[1]):
-    #     # Sort in Descending order - intermediate value, not a reference
-    #     k = class_scores[class_scores[:, 0].argsort()[::-1], 0]
-
-    # NMS: check bbox_max
-
-    # Sort descending by its scores
-
-    # apply NMS with Tensorflow...
-    # tf_nms_boxes1, tf_nms_boxes2 = convert_yolobbox_tfbbox(bbox_1), convert_yolobbox_tfbbox(bbox_2)
-    # tf_nms_boxes = np.stack([tf_nms_boxes1, tf_nms_boxes2], axis=3)
-    # tf_nms_boxes = np.reshape(tf_nms_boxes, [-1, 4])  # 98 * 4
-    #
-    # bbox_to_draw = np.empty(shape=(1, 7, 7, 2, 4))
-    # for class_id in range(np.shape(class_scores)[1]):
-    #     # class_id는 0부터 19까지 (클래스 개수만큼) 진행
-    #     single_class_score = class_scores[:, class_id]
-    #
-    #     selected_indices = tf.image.non_max_suppression(
-    #         boxes=tf_nms_boxes,
-    #         scores=single_class_score,
-    #         iou_threshold=0.5,
-    #         max_output_size=tf.convert_to_tensor(2)
-    #     )
-    #
-    #     print(selected_indices)
-    #     print(selected_indices.shape)
-    #
-    #     nms_selected = tf.gather(single_class_score, selected_indices)
-
-
-GLOBAL_EPOCHS = 5
-SAVE_PERIOD_EPOCHS = 1
-# CHECKPOINT_FILENAME = 'checkpoint.h5'
-# CHECKPOINT_FILENAME = "saved-model-a2ae-{epoch:02d}.hdf5"
-CHECKPOINT_FILENAME = "yolov1-training.hdf5"
-MODE_TRAIN = True
+GLOBAL_EPOCHS = 500
+SAVE_PERIOD_EPOCHS = 200 #  (sample num = 2)
+CHECKPOINT_FILENAME = "yolov2-training.hdf5"
+MODE_TRAIN = False
 LOAD_WEIGHT = True
-'''
-    Learning Rate에 대한 고찰
-    - 다양한 Augmentation이 활성화되어 있을 시, 2e-5  (loss: 100 언저리까지 가능)
-    - Augmentation 비활성화 시, 1e-4: loss 20 언저리까지 가능
-    - 1e-5: 20 언저리까지 떨어진 이후
-    - Augmentation 비활성화 시, 시작부터 5e-6: 23까지는 잘 떨어짐
-'''
-LEARNING_RATE = 5e-6
-DECAY_RATE = 5e-5
+
+# LEARNING_RATE = 1e-2
+# DECAY_RATE = 5e-5
 thresh1 = 0.2
 thresh2 = 0.2
 
-train_data = Dataloader(file_name='manifest-train.txt', numClass=20, batch_size=8, augmentation=True)
-train_data_no_augmentation = Dataloader(file_name='manifest-train.txt', numClass=20, batch_size=4, augmentation=False)
-valid_train_data = Dataloader(file_name='manifest-valid.txt', numClass=20, batch_size=2)
-test_data = Dataloader(file_name='manifest-test.txt', numClass=20, batch_size=4)
-# dev_data = Dataloader(file_name='manifest_two.txt', numClass=20, batch_size=2, augmentation=False)
+'''
+    ANCHOR_BOXES에는 값으로 들어간다.
+    -> 계산시 각 값을 13으로 나누어 작업하면 됨.
+'''
 
-TARGET_TRAIN_DATA = train_data_no_augmentation
-# train_data = dev_data
-# valid_train_data = dev_data
-# test_data = dev_data
+train_data = Yolov2Dataloader(file_name='manifest-train.txt', numClass=20, batch_size=8, augmentation=True)
+train_data_no_augmentation = Yolov2Dataloader(file_name='manifest-train.txt', numClass=20, batch_size=4,
+                                              augmentation=False)
+valid_train_data = Yolov2Dataloader(file_name='manifest-valid.txt', numClass=20, batch_size=2)
+test_data = Yolov2Dataloader(file_name='manifest-test.txt', numClass=20, batch_size=4)
 
-model = Yolov1Model()
-optimizer = Adam(learning_rate=LEARNING_RATE, decay=DECAY_RATE)
-model.compile(optimizer=optimizer, loss=Yolov1Loss)
-# 기본 Adam Optimizer는 Loss가 무지막지하게 올라간다....!
-# model.compile(optimizer='adam', loss=Yolov1Loss)
+train_twoimg = Yolov2Dataloader(file_name='manifest-twoimg.txt', numClass=20, batch_size=2,
+                                              augmentation=False)
 
-# model.summary()
-# plot_model(model, to_file='model.png')
-# model_image = cv2.imread('model.png')
-# cv2.imshow("image", model_image)
-# cv2.waitKey(0)
+TARGET_TRAIN_DATA = train_twoimg
+model = Yolov2Model()
+# optimizer = Adam(learning_rate=LEARNING_RATE, decay=DECAY_RATE)
+# model.compile(optimizer=optimizer, loss=Yolov2Loss)
+model.compile(optimizer='adam', loss=Yolov2Loss)
 
-save_frequency = int(
-    SAVE_PERIOD_EPOCHS * TARGET_TRAIN_DATA.__len__() / TARGET_TRAIN_DATA.batch_size *
-    (1 if TARGET_TRAIN_DATA.augmenter else TARGET_TRAIN_DATA.augmenter_size)
-)
-print("Save frequency is {} sample, batch_size={}.".format(save_frequency, TARGET_TRAIN_DATA.batch_size))
+model.summary()
+
+print("Save frequency is {} sample, batch_size={}.".format(SAVE_PERIOD_EPOCHS, TARGET_TRAIN_DATA.batch_size))
 
 save_best_model = ModelCheckpoint(
     CHECKPOINT_FILENAME,
@@ -196,7 +133,7 @@ save_best_model = ModelCheckpoint(
     save_weights_only=True,
     monitor='loss',
     mode='min',
-    save_freq=save_frequency
+    save_freq=SAVE_PERIOD_EPOCHS
 )
 
 if LOAD_WEIGHT and os.path.isfile(CHECKPOINT_FILENAME):
@@ -206,7 +143,7 @@ if MODE_TRAIN:
     model.fit(
         TARGET_TRAIN_DATA,
         epochs=GLOBAL_EPOCHS,
-        validation_data=valid_train_data,
+        # validation_data=valid_train_data,
         shuffle=True,
         callbacks=[save_best_model],
         verbose=1
@@ -217,9 +154,9 @@ else:
     data_iterations = 1
     result_set = []
     for _ in range(data_iterations):
-        image, _, _ = test_data.__getitem__(random.randrange(0, test_data.__len__()))
+        image, _ = test_data.__getitem__(random.randrange(0, test_data.__len__()))
         result = model.predict(image)
-        postprocess_non_nms_result(image, result)
+        # postprocess_non_nms_result(image, result)
+        postprocess_non_nms_result_v2(image, result)
 
     print(result_set)
-
