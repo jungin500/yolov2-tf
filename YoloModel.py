@@ -4,7 +4,6 @@ from tensorflow.keras.layers import Conv2D, MaxPool2D, GlobalAveragePooling2D, D
 
 import tensorflow as tf
 
-
 def LeakyNormConv2D(input, filter_size, kernel_size, strides=(1, 1), block_name=''):
     # bias를 쓰지 않는 이유? batch_norm?
     x = Conv2D(
@@ -13,7 +12,7 @@ def LeakyNormConv2D(input, filter_size, kernel_size, strides=(1, 1), block_name=
         strides=strides,
         padding='same',
         activation=None,
-        use_bias=False,
+        # use_bias=False,
         name=block_name + '_conv'
     )(input)
     x = BatchNormalization(name=block_name + '_bn')(x)
@@ -93,11 +92,11 @@ def Yolov2Model():
     x = ResBlock(x, skip_connection=skip_connection, filter_size=64, kernel_size=1, block_name='res_l7')
     x = LeakyNormConv2D(x, filter_size=1024, kernel_size=3, block_name='leaky_l7')
 
-    # L8 (Final) -> 5 anchor boxes, 1 confidence, 4 boundaries, 20 class probability
-    # [[box_x, box_y, box_w, box_h, confid] <-> [classes (20)], [...]]
-    # [ ] COCO Dataset: 80 classes, [x] VOC2007 dataset: 20 classes
-    x = Conv2D(filters=5 * (20 + 1 + 4), kernel_size=1, padding='same', name='conv_l8', use_bias=False)(x)
-    x = Reshape((13, 13, 5, 25))(x) # 결과값: 13 * 13 * 5 * 25
+    # L8 (Final)
+    # 5 * Box[{ t_x, t_y, t_w, t_h, t_c } + { class_0 ~ class_19 }] = 5 * (5 + 20) = 5 * 25 = 125
+    x = Conv2D(filters=125, kernel_size=1, padding='same', name='conv_l8', use_bias=False)(x)
+    x = Reshape((13, 13, 5, 25))(x)  # 결과값: 13 * 13 * 5 * 25
 
+    # model = Model(inputs=[inputs, TrueBox], outputs=x)
     model = Model(inputs=inputs, outputs=x)
     return model

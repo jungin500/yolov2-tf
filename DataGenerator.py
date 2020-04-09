@@ -47,17 +47,12 @@ class Yolov2Dataloader(utils.Sequence):
     DEFAULT_AUGMENTER = iaa.SomeOf(2, [
         iaa.Multiply((1.2, 1.5)),  # change brightness, doesn't affect BBs
         iaa.Affine(
-            translate_px={"x": 20, "y": 50},
-            scale=(0.9, 0.9)
-        ),
-        iaa.Affine(
-            translate_px={"x": 100, "y": -200},
-            scale=(1.5, 1.2)
-        ),
+                translate_px={"x": 3, "y": 10},
+                scale=(1.2, 1.2)
+        ),  # translate by 40/60px on x/y axis, and scale to 50-70%, affects BBs
         iaa.AdditiveGaussianNoise(scale=0.1 * 255),
         iaa.CoarseDropout(0.02, size_percent=0.15, per_channel=0.5),
-        iaa.Affine(rotate=45),
-        iaa.Affine(rotate=60),
+        # iaa.Affine(rotate=45),
         iaa.Sharpen(alpha=0.5)
     ])
 
@@ -67,7 +62,6 @@ class Yolov2Dataloader(utils.Sequence):
         self.batch_size = batch_size
         self.shuffle = shuffle
         self.augmenter = self.DEFAULT_AUGMENTER if augmentation else False
-        self.augmenter_size = 4
         self.outSize = 5 + numClass
         self.labeler = Labeler('voc.names')
         self.on_epoch_end()
@@ -147,22 +141,19 @@ class Yolov2Dataloader(utils.Sequence):
             relative_center_x = relative_coord[0] - int(relative_coord[0])
             relative_center_y = relative_coord[1] - int(relative_coord[1])
 
-            label[grid_y_index][grid_x_index][anchor_idx][class_id] = 1.
-            label[grid_y_index][grid_x_index][anchor_idx][20:] = np.array([relative_center_x, relative_center_y, width, height, 1])
+            if label[grid_y_index][grid_x_index][anchor_idx][class_id] == 0.:
+                label[grid_y_index][grid_x_index][anchor_idx][class_id] = 1.
+                label[grid_y_index][grid_x_index][anchor_idx][20:] = np.array([relative_center_x, relative_center_y, width, height, 1])
 
-            raw_label.append(np.array([center_x, center_y, width, height, class_id]))
+                raw_label.append(np.array([center_x, center_y, width, height, class_id]))
 
         return label, np.array(raw_label)
 
     def __data_generation(self, list_img_path, list_label_path):
         'Generates data containing batch_size samples'  # X : (n_samples, *dim, n_channels)
         # Initialization
-        if self.augmenter:
-            X = np.empty((self.batch_size * self.augmenter_size, *self.dim))
-            Y = np.empty((self.batch_size * self.augmenter_size, *(13, 13, 5, 25)))
-        else:
-            X = np.empty((self.batch_size, *self.dim))
-            Y = np.empty((self.batch_size, *(13, 13, 5, 25)))
+        X = np.empty((self.batch_size, *self.dim))
+        Y = np.empty((self.batch_size, *(13, 13, 5, 25)))
 
         # Generate data
         for i, path in enumerate(list_img_path):
@@ -172,15 +163,14 @@ class Yolov2Dataloader(utils.Sequence):
             label, raw_label = self.GetLabel(list_label_path[i], original_image.shape[0], original_image.shape[1])
             if self.augmenter:
                 iaa_bbs = self.__convert_yololabel_to_iaabbs(raw_label)
-                for aug_idx in range(self.augmenter_size):
-                    augmented_image, augmented_label = self.augmenter(
-                        image=(original_image * 255).astype(np.uint8),
-                        bounding_boxes=iaa_bbs
-                    )
-                    # test_augmented_items(augmented_image, augmented_label)
-                    X[aug_idx * self.batch_size + i,] = augmented_image / 255
-                    Y[aug_idx * self.batch_size + i,], augmented_raw_label = \
-                        self.__convert_iaabbs_to_yololabel(augmented_label.remove_out_of_image().clip_out_of_image())
+                augmented_image, augmented_label = self.augmenter(
+                    image=(original_image * 255).astype(np.uint8),
+                    bounding_boxes=iaa_bbs
+                )
+                # test_augmented_items(augmented_image, augmented_label)
+                X[i,] = augmented_image / 255
+                Y[i,], augmented_raw_label = \
+                    self.__convert_iaabbs_to_yololabel(augmented_label.remove_out_of_image().clip_out_of_image())
             else:
                 X[i,] = original_image
                 Y[i,] = label
@@ -222,16 +212,22 @@ class Yolov2Dataloader(utils.Sequence):
             x_relative = grid_idx[0] - int(grid_idx[0])
             y_relative = grid_idx[1] - int(grid_idx[1])
 
-            label[grid_y_index][grid_x_index][anchor_idx][c] = 1.
-            label[grid_y_index][grid_x_index][anchor_idx][20:] = np.array([x_relative, y_relative, w, h, 1])
+            # 레이블은 하나만 지정한다.
+            # 같은 Cell에 두 개 이상의 레이블이 들어가게 되면,
+            # 하나의 객체만 사용한다.
+            if label[grid_y_index][grid_x_index][anchor_idx][c] == 0.:
+                label[grid_y_index][grid_x_index][anchor_idx][c] = 1.
+                label[grid_y_index][grid_x_index][anchor_idx][20:] = np.array([x_relative, y_relative, w, h, 1])
 
-            raw_label.append(np.array([
-                int((x - w / 2) * self.dim[0]),
-                int((y - h / 2) * self.dim[1]),
-                int((x + w / 2) * self.dim[0]),
-                int((y + h / 2) * self.dim[1]),
-                c
-            ]))
+                raw_label.append(np.array([
+                    int((x - w / 2) * self.dim[0]),
+                    int((y - h / 2) * self.dim[1]),
+                    int((x + w / 2) * self.dim[0]),
+                    int((y + h / 2) * self.dim[1]),
+                    c
+                ]))
+            else:
+                print("Skipping labeling ... two or more bbox in same cell")
 
         return label, np.array(raw_label)
 
