@@ -43,25 +43,25 @@ ANCHOR_BOXES_TF = tf.reshape(
 )
 
 
-def get_bbox_anchor(box_wh):
-    anchor_box = ANCHOR_BOXES_TF
-    anchor_ratio = anchor_box[..., 0] / anchor_box[..., 1]  # width / height, 1 * 1 * 1 * 5 * 1
-    box_ratio = box_wh[..., 0] / box_wh[..., 1]  # width / height, ? * 13 * 13 * 5 * 1
-    ratio_diff = tf.abs(anchor_ratio - box_ratio)  # ? * 13 * 13 * 5 * 1
-    ratio_diff = tf.reshape(ratio_diff, shape=(-1, 13, 13, 5))  # ? * 13 * 13 * 5
-    ratio_diff = tf.cast(ratio_diff, tf.float32)
+# def get_bbox_anchor(box_wh):
+#     anchor_box = ANCHOR_BOXES_TF
+#     anchor_ratio = anchor_box[..., 0] / anchor_box[..., 1]  # width / height, 1 * 1 * 1 * 5 * 1
+#     box_ratio = box_wh[..., 0] / box_wh[..., 1]  # width / height, ? * 13 * 13 * 5 * 1
+#     ratio_diff = tf.abs(anchor_ratio - box_ratio)  # ? * 13 * 13 * 5 * 1
+#     ratio_diff = tf.reshape(ratio_diff, shape=(-1, 13, 13, 5))  # ? * 13 * 13 * 5
+#     ratio_diff = tf.cast(ratio_diff, tf.float32)
+#
+#     bbox_anchor_nms_mask = tf.where(  # Find indices that is max between 5 anchors
+#         ratio_diff > tf.reduce_min(ratio_diff, axis=3, keepdims=True),
+#         0.,   # Set to zero if not a min
+#         1.,  # Set to ratio_diff original value
+#     )  # ? * 13 * 13 * 5
+#     return tf.reshape(bbox_anchor_nms_mask, shape=(-1, 13, 13, 5, 1, 1))  # 5 -> (5 * 1 * 1)
 
-    bbox_anchor_nms_mask = tf.where(  # Find indices that is max between 5 anchors
-        ratio_diff > tf.reduce_min(ratio_diff, axis=3, keepdims=True),
-        0.,   # Set to zero if not a min
-        1.,  # Set to ratio_diff original value
-    )  # ? * 13 * 13 * 5
-    return tf.reshape(bbox_anchor_nms_mask, shape=(-1, 13, 13, 5, 1, 1))  # 5 -> (5 * 1 * 1)
 
-
-def get_anchor_mask():
-    anchor_box = ANCHOR_BOXES_TF
-    return tf.reshape(anchor_box, shape=(1, 1, 1, 5, 1, 2))
+# def get_anchor_mask():
+#     anchor_box = ANCHOR_BOXES_TF
+#     return tf.reshape(anchor_box, shape=(1, 1, 1, 5, 1, 2))
 
 
 # Returns 1 * 13  * 13 * 1 * 1 * 2
@@ -93,6 +93,9 @@ def cell_offset_table():
 
     conv_index = K.cast(conv_index, tf.float32)
 
+    diff = (1 / 13 * 416)
+    conv_index = conv_index * diff
+
     return conv_index
 
 
@@ -105,42 +108,43 @@ def Yolov2Loss(y_true, y_pred):
     predict_box = y_pred[..., 20:24]                        # ? * 13 * 13 * 5 * 4
     predict_bbox_confidences = y_pred[..., 24]              # ? * 13 * 13 * 5
 
-    label_txty, label_twth = label_box[..., :2], label_box[..., 2:4]          # ? * 13 * 13 * 5 * 2, ? * 13 * 13 * 5 * 2
-    label_bxby = tf.sigmoid(label_txty) + cell_offset_table()                 # ? * 13 * 13 * 5 * 2
-    label_bwbh = ANCHOR_BOXES_TF * tf.math.exp(label_twth)                    # ? * 13 * 13 * 5 * 2
-    label_bxby = tf.expand_dims(label_bxby, 4)                                # ? * 13 * 13 * 5 * 1 * 2
-    label_bwbh = tf.expand_dims(label_bwbh, 4)                                # ? * 13 * 13 * 5 * 1 * 2
-    label_bxby_min, label_bxby_max = xywh2minmax(label_bxby, label_bwbh)      # ? * 13 * 13 * 5 * 1 * 2, ? * 13 * 13 * 5 * 1 * 2
+    label_bxby, label_bwbh = label_box[..., :2], label_box[..., 2:4]  # ? * 13 * 13 * 5 * 2, ? * 13 * 13 * 5 * 2
+    label_bxby_ext = tf.expand_dims(label_bxby, 4)  # ? * 13 * 13 * 5 * 1 * 2
+    label_bwbh_ext = tf.expand_dims(label_bwbh, 4)  # ? * 13 * 13 * 5 * 1 * 2
+    label_bxby_min, label_bxby_max = xywh2minmax(label_bxby_ext, label_bwbh_ext)  # ? * 13 * 13 * 5 * 1 * 2, ? * 13 * 13 * 5 * 1 * 2
 
     predict_txty, predict_twth = predict_box[..., :2], predict_box[..., 2:4]      # ? * 13 * 13 * 5 * 2, ? * 13 * 13 * 5 * 2
     predict_bxby = tf.sigmoid(predict_txty) + cell_offset_table()                 # ? * 13 * 13 * 5 * 2
-    predict_bwbh = ANCHOR_BOXES_TF * tf.math.exp(predict_twth)                    # ? * 13 * 13 * 5 * 2
-    predict_bxby = tf.expand_dims(predict_bxby, 4)                                # ? * 13 * 13 * 5 * 1 * 2
-    predict_bwbh = tf.expand_dims(predict_bwbh, 4)                                # ? * 13 * 13 * 5 * 1 * 2
-    predict_bxby_min, predict_bxby_max = xywh2minmax(predict_bxby, predict_bwbh)  # ? * 13 * 13 * 5 * 1 * 2, ? * 13 * 13 * 5 * 1 * 2
+    predict_bwbh = tf.math.exp(predict_twth) * ANCHOR_BOXES_TF                    # ? * 13 * 13 * 5 * 2
+    predict_bxby_ext = tf.expand_dims(predict_bxby, 4)                                # ? * 13 * 13 * 5 * 1 * 2
+    predict_bwbh_ext = tf.expand_dims(predict_bwbh, 4)                                # ? * 13 * 13 * 5 * 1 * 2
+    predict_bxby_min, predict_bxby_max = xywh2minmax(predict_bxby_ext, predict_bwbh_ext)  # ? * 13 * 13 * 5 * 1 * 2, ? * 13 * 13 * 5 * 1 * 2
 
     iou_scores = iou(predict_bxby_min, predict_bxby_max, label_bxby_min, label_bxby_max)  # ? * 13 * 13 * 5 * 1
     best_ious = K.max(iou_scores, axis=4)                                                 # ? * 13 * 13 * 5
-    best_box = K.max(best_ious, axis=3, keepdims=True)                                    # ? * 13 * 13 * 1
+    best_priors = K.max(best_ious, axis=3, keepdims=True)                                    # ? * 13 * 13 * 1
 
-    box_mask = K.cast(best_ious >= best_box, K.dtype(best_ious))  # ? * 13 * 13 * 5
+    prior_mask = K.cast(best_ious >= best_priors, K.dtype(best_ious))  # ? * 13 * 13 * 5
 
-    # _label_box = K.reshape(label_box, [-1, 13, 13, 5, 1, 4])           # (원본) ? * 13 * 13 * 5 * 4
-    # _predict_box = K.reshape(predict_box, [-1, 13, 13, 5, 1, 4])       # (원본) ? * 13 * 13 * 5 * 4
+    # label_xy, label_wh = label_box[..., 2:], label_box[..., 2:4]   # 각 ? * 13 * 13 * 5 * 2
+    # predict_xy, predict_wh = predict_box[..., 2:], predict_box[..., 2:4]  # 각 ? * 13 * 13 * 5 * 2
 
-    # label_xy, label_wh = yolo_head(_label_box)  # ? * 13 * 13 * 5 * 1 * 2, ? * 13 * 13 * 5 * 1 * 2
-    # predict_xy, predict_wh = yolo_head(_predict_box)  # ? * 13 * 13 * 5 * 1 * 2, ? * 13 * 13 * 5 * 1 * 2
-    label_xy, label_wh = label_box[..., 2:], label_box[..., 2:4]   # 각 ? * 13 * 13 * 5 * 2
-    predict_xy, predict_wh = predict_box[..., 2:], predict_box[..., 2:4]  # 각 ? * 13 * 13 * 5 * 2
-
-    box_mask = K.expand_dims(box_mask)  # ? * 13 * 13 * 5 * 1
+    prior_mask = K.expand_dims(prior_mask)  # ? * 13 * 13 * 5 * 1
     responsible_mask = K.expand_dims(responsible_mask)  # ? * 13 * 13 * 5 * 1
+    # prior_mask_ext = K.expand_dims(prior_mask)  # ? * 13 * 13 * 5 * 1 * 1
+    # responsible_mask_ext = K.expand_dims(responsible_mask)  # ? * 13 * 13 * 5 * 1 * 1
 
     # Loss 함수 1번
-    box_loss = 5 * box_mask * responsible_mask * K.square(label_xy - predict_xy)
+    xy_loss = 5 * prior_mask * responsible_mask * K.square((label_bxby / 416) - (predict_bxby / 416))
+    box_loss = xy_loss
+
+    tf.print("\n- xy loss:", tf.reduce_sum(xy_loss), output_stream=sys.stdout)
 
     # Loss 함수 2번
-    box_loss += 5 * box_mask * responsible_mask * K.square(label_wh - predict_wh)
+    wh_loss = 5 * prior_mask * responsible_mask * K.square((label_bwbh / 416) - (predict_bwbh / 416))
+    box_loss += wh_loss
+
+    tf.print("- wh loss:", tf.reduce_sum(wh_loss), output_stream=sys.stdout)
 
     # 1번+2번 총합
     box_loss = K.sum(box_loss)
@@ -148,9 +152,9 @@ def Yolov2Loss(y_true, y_pred):
     predict_bbox_confidences = K.expand_dims(predict_bbox_confidences)
 
     # Loss 함수 3번 (without lambda_noobj)
-    object_loss = box_mask * responsible_mask * K.square(1 - predict_bbox_confidences)
+    object_loss = prior_mask * responsible_mask * K.square(1 - predict_bbox_confidences)
     # Loss 함수 4번 (with lambda_noobj 0.5)
-    no_object_loss = 0.5 * (1 - box_mask * responsible_mask) * K.square(0 - predict_bbox_confidences)
+    no_object_loss = 0.5 * (1 - prior_mask * responsible_mask) * K.square(0 - predict_bbox_confidences)
 
     confidence_loss = no_object_loss + object_loss
     confidence_loss = K.sum(confidence_loss)
@@ -163,12 +167,97 @@ def Yolov2Loss(y_true, y_pred):
 
     loss = box_loss + confidence_loss + class_loss
 
-    tf.print("\n- confidence_loss:", confidence_loss, output_stream=sys.stdout)
+    tf.print("- confidence_loss:", confidence_loss, output_stream=sys.stdout)
     tf.print("- class_loss:", class_loss, output_stream=sys.stdout)
     tf.print("- box_loss:", box_loss, output_stream=sys.stdout)
 
     return loss
 
+
+ANCHORS = ANCHOR_BOXES
+BOX = 5
+SCALE_COOR = 5
+SCALE_NOOB = .5
+SCALE_CONF = 1.
+CLASS = 20
+SCALE_PROB = 1.
+
+def Yolov2Loss_v2(y_true, y_pred):
+    GRID = K.cast(K.shape(y_true)[1], dtype='float32')
+
+    ### yolo loss
+    # adjust x and y
+    pred_box_xy = tf.sigmoid(y_pred[:, :, :, :, 20:22])
+
+    # adjust w and h
+    pred_box_wh = tf.exp(y_pred[:, :, :, :, 22:24]) * tf.reshape(ANCHORS, [1, 1, 1, BOX, 2])
+    pred_box_wh = tf.sqrt(pred_box_wh / tf.reshape([GRID, GRID], [1, 1, 1, 1, 2]))
+
+    # adjust confidence
+    pred_box_conf = tf.expand_dims(tf.sigmoid(y_pred[:, :, :, :, 24]), -1)
+
+    # adjust probability
+    pred_box_prob = tf.nn.softmax(y_pred[:, :, :, :, :20])
+
+    y_pred = tf.concat([pred_box_prob, pred_box_xy, pred_box_wh, pred_box_conf], 4)
+
+    ### Adjust ground truth
+    # adjust x and y
+    center_xy = y_true[:, :, :, :, 20:22]
+    true_box_xy = y_true[:, :, :, :, 20:22] - (y_true[:, :, :, :, 22:24] / 2)
+
+    # adjust w and h
+    true_box_wh = y_true[:, :, :, :, 22:24]
+
+    # adjust confidence
+    pred_tem_wh = tf.pow(pred_box_wh, 2) * tf.reshape([GRID, GRID], [1, 1, 1, 1, 2])
+    pred_box_area = pred_tem_wh[:, :, :, :, 0] * pred_tem_wh[:, :, :, :, 1]
+    pred_box_ul = pred_box_xy - 0.5 * pred_tem_wh
+    pred_box_bd = pred_box_xy + 0.5 * pred_tem_wh
+
+    true_tem_wh = tf.pow(true_box_wh, 2) * tf.reshape([GRID, GRID], [1, 1, 1, 1, 2])
+    true_box_area = true_tem_wh[:, :, :, :, 0] * true_tem_wh[:, :, :, :, 1]
+    true_box_ul = true_box_xy - 0.5 * true_tem_wh
+    true_box_bd = true_box_xy + 0.5 * true_tem_wh
+
+    intersect_ul = tf.maximum(pred_box_ul, true_box_ul)
+    intersect_br = tf.minimum(pred_box_bd, true_box_bd)
+    intersect_wh = intersect_br - intersect_ul
+    intersect_wh = tf.maximum(intersect_wh, 0.0)
+    intersect_area = intersect_wh[:, :, :, :, 0] * intersect_wh[:, :, :, :, 1]
+
+    iou = tf.truediv(intersect_area, true_box_area + pred_box_area - intersect_area)
+    best_box = tf.equal(iou, tf.reduce_max(iou, [3], True))
+    best_box = tf.cast(best_box, tf.float32)
+    true_box_conf = tf.expand_dims(best_box * y_true[:, :, :, :, 24], -1)
+
+    # adjust confidence
+    true_box_prob = y_true[:, :, :, :, :20]
+
+    y_true = tf.concat([true_box_prob, true_box_xy, true_box_wh, true_box_conf], 4)
+
+    ### Compute the weights
+    weight_coor = tf.concat(4 * [true_box_conf], 4)
+    weight_coor = SCALE_COOR * weight_coor
+
+    weight_conf = SCALE_NOOB * (1. - true_box_conf) + SCALE_CONF * true_box_conf
+
+    weight_prob = tf.concat(CLASS * [true_box_conf], 4)
+    weight_prob = SCALE_PROB * weight_prob
+
+    weight = tf.concat([weight_coor, weight_conf, weight_prob], 4)
+
+    ### Finalize the loss
+    loss = tf.pow(y_pred - y_true, 2)
+    loss = loss * weight
+
+    loss_shape = tf.shape(loss)
+    loss = tf.reshape(loss, [-1, loss_shape[1] * loss_shape[2] * loss_shape[3] * loss_shape[4]])
+
+    loss = tf.reduce_sum(loss, 1)
+    loss = .5 * tf.reduce_mean(loss)
+
+    return loss
 
 def DummyLoss(y_true, y_pred):
     return tf.reduce_sum(y_pred)

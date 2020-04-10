@@ -122,28 +122,24 @@ class Yolov2Dataloader(utils.Sequence):
         raw_label = []
 
         for bbox in iaa_bbs_out.bounding_boxes:
-            center_x = bbox.center_x / self.dim[0]
-            center_y = bbox.center_y / self.dim[1]
-            width = bbox.width / self.dim[0]
-            height = bbox.height / self.dim[1]
+            center_x = bbox.center_x
+            center_y = bbox.center_y
+            width = bbox.width
+            height = bbox.height
             class_id = int(float(bbox.label))  # Explicit
 
             anchor_idx = get_best_iou_anchor_idx(width, height)
 
             scale_factor = (1 / 13)
 
-            grid_x_index = int(center_x // scale_factor)
-            grid_y_index = int(center_y // scale_factor)
+            grid_x_index = int((center_x / 416) // scale_factor)
+            grid_y_index = int((center_y / 416) // scale_factor)
             grid_x_index, grid_y_index = \
                 np.clip([grid_x_index, grid_y_index], a_min=0, a_max=6)
 
-            relative_coord = [center_x * 13, center_y * 13]
-            relative_center_x = relative_coord[0] - int(relative_coord[0])
-            relative_center_y = relative_coord[1] - int(relative_coord[1])
-
             if label[grid_y_index][grid_x_index][anchor_idx][class_id] == 0.:
                 label[grid_y_index][grid_x_index][anchor_idx][class_id] = 1.
-                label[grid_y_index][grid_x_index][anchor_idx][20:] = np.array([relative_center_x, relative_center_y, width, height, 1])
+                label[grid_y_index][grid_x_index][anchor_idx][20:] = np.array([center_x, center_y, width, height, 1])
 
                 raw_label.append(np.array([center_x, center_y, width, height, class_id]))
 
@@ -169,7 +165,7 @@ class Yolov2Dataloader(utils.Sequence):
                 )
                 # test_augmented_items(augmented_image, augmented_label)
                 X[i,] = augmented_image / 255
-                Y[i,], augmented_raw_label = \
+                Y[i,], _ = \
                     self.__convert_iaabbs_to_yololabel(augmented_label.remove_out_of_image().clip_out_of_image())
             else:
                 X[i,] = original_image
@@ -181,49 +177,39 @@ class Yolov2Dataloader(utils.Sequence):
         f = open(label_path, 'r')
         label = np.zeros((13, 13, 5, 25), dtype=np.float32)
         raw_label = []
+        size = 416
         while True:
             line = f.readline()
             if not line: break
 
-            dw = 1. / img_w
-            dh = 1. / img_h
-
             split_line = line.split()
-
             c, x, y, w, h = split_line
 
-            x = float(x)
-            y = float(y)
-            w = float(w)
-            h = float(h)
+            x = float(x) * size
+            y = float(y) * size
+            w = float(w) * size
+            h = float(h) * size
             c = int(c)
 
             anchor_idx = get_best_iou_anchor_idx(w, h)
-
             scale_factor = (1 / 13)
 
             # // : 몫
-            grid_x_index = int(x // scale_factor)
-            grid_y_index = int(y // scale_factor)
-
-            # x, y는 해당 셀 내에서의
-            # 상대적 위치를 가지고 간다.
-            grid_idx = [x * 13, y * 13]
-            x_relative = grid_idx[0] - int(grid_idx[0])
-            y_relative = grid_idx[1] - int(grid_idx[1])
+            grid_x_index = int((x / size) // scale_factor)
+            grid_y_index = int((y / size) // scale_factor)
 
             # 레이블은 하나만 지정한다.
             # 같은 Cell에 두 개 이상의 레이블이 들어가게 되면,
             # 하나의 객체만 사용한다.
             if label[grid_y_index][grid_x_index][anchor_idx][c] == 0.:
                 label[grid_y_index][grid_x_index][anchor_idx][c] = 1.
-                label[grid_y_index][grid_x_index][anchor_idx][20:] = np.array([x_relative, y_relative, w, h, 1])
+                label[grid_y_index][grid_x_index][anchor_idx][20:] = np.array([x, y, w, h, 1])
 
                 raw_label.append(np.array([
-                    int((x - w / 2) * self.dim[0]),
-                    int((y - h / 2) * self.dim[1]),
-                    int((x + w / 2) * self.dim[0]),
-                    int((y + h / 2) * self.dim[1]),
+                    x - w / 2,
+                    y - h / 2,
+                    x + w / 2,
+                    y + h / 2,
                     c
                 ]))
             else:

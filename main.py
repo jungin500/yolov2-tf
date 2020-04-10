@@ -8,28 +8,29 @@ os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
 
 from tensorflow.keras.callbacks import ModelCheckpoint, TensorBoard, EarlyStopping
 from tensorflow.keras.optimizers import Adam
-from YoloLoss import Yolov2Loss, DummyLoss
+from YoloLoss import Yolov2Loss, Yolov2Loss_v2, DummyLoss, ANCHOR_BOXES, cell_offset_table
 from YoloModel import Yolov2Model
 from DataGenerator import Yolov2Dataloader
 
-# result: 1 * 7 * 7 * 30
+
+def sigmoid(x):
+    return 1 / (1 + np.exp(-x))
+
+
+# result: 1 * 13 * 13 * 5 * 25
 def display_result_image_v2(input_image, network_output, no_suppress=False, display_all=True):
-    classes = network_output[:, :, :, :20]
-    confidence_1, confidence_2 = network_output[:, :, :, 20], network_output[:, :, :, 21]
-    bbox_1, bbox_2 = network_output[:, :, :, 22:26], network_output[:, :, :, 26:30]
+    classes = network_output[..., :20]  # ? * 13 * 13 * 5 * 20
+    bbox = network_output[..., 20:24]  # ? * 13 * 13 * 5 * 4
+    confidence = network_output[..., 24]  # ? * 13 * 13 * 5
 
-    class_score_bbox_1 = np.expand_dims(confidence_1, axis=3) * classes
-    class_score_bbox_2 = np.expand_dims(confidence_2, axis=3) * classes
+    class_score_bbox = np.expand_dims(confidence, axis=4) * classes  # ? * 13 * 13 * 5 * 20
 
-    # Set zero if score < thresh1 (0.2)
-    class_score_bbox_1[np.where(class_score_bbox_1 < thresh1)] = 0.
-    class_score_bbox_2[np.where(class_score_bbox_2 < thresh1)] = 0.
+    # Set zero if core < thresh1 (0.2)
+    class_score_bbox[np.where(class_score_bbox < thresh1)] = 0.
 
     # class_score 중에서 가장 높은 class id
-    class_score_bbox_1_max_class = np.argmax(class_score_bbox_1, axis=3)
-    class_score_bbox_2_max_class = np.argmax(class_score_bbox_2, axis=3)
-    class_score_bbox_1_max_score = np.amax(class_score_bbox_1, axis=3)
-    class_score_bbox_2_max_score = np.amax(class_score_bbox_2, axis=3)
+    class_score_bbox_max_class = np.argmax(class_score_bbox, axis=4)
+    class_score_bbox_max_score = np.amax(class_score_bbox, axis=4)
 
     batch_size = np.shape(input_image)[0]
 
@@ -42,71 +43,83 @@ def display_result_image_v2(input_image, network_output, no_suppress=False, disp
 
     for batch in display_range:
         input_image_single = input_image[batch]
+
         input_image_pil = Image.fromarray((input_image_single * 255).astype(np.uint8), 'RGB')
         input_image_draw = ImageDraw.Draw(input_image_pil)
 
-        for y in range(7):
-            for x in range(7):
-                first_bigger = class_score_bbox_1_max_score[batch][y][x] > class_score_bbox_2_max_score[batch][y][x]
-                if not no_suppress and (first_bigger and class_score_bbox_1_max_score[batch][y][x] == 0) and (
-                        not first_bigger and class_score_bbox_2_max_score[batch][y][x] == 0):
-                    continue
+        max_anchor_id_per_cell = np.argmax(confidence, axis=3)  # ? * 13 * 13
+        max_anchor_mask = np.where(
+            confidence
+        )
+        drawn = False
 
-                class_id = None
-                class_score_bbox = None
-                bbox = None
-                if first_bigger:
-                    class_id = class_score_bbox_1_max_class[batch][y][x]
-                    class_score_bbox = class_score_bbox_1_max_score[batch][y][x]
-                    bbox = bbox_1[batch][y][x]
-                else:
-                    class_id = class_score_bbox_2_max_class[batch][y][x]
-                    class_score_bbox = class_score_bbox_2_max_score[batch][y][x]
-                    bbox = bbox_2[batch][y][x]
+        for y in range(13):
+            for x in range(13):
+                for anchor_id in range(5):
+                    class_id = class_score_bbox_max_class[batch][y][x][anchor_id]
+                    class_score_bbox = class_score_bbox_max_score[batch][y][x][anchor_id]
 
-                if not no_suppress and class_score_bbox < thresh2:
-                    continue
+                    if not no_suppress and anchor_id is not max_anchor_id_per_cell[batch][y][x]:
+                        continue
 
-                (x_c, y_c, w, h) = bbox
+                    if not no_suppress and class_score_bbox_max_score[batch][y][x][anchor_id] == 0:
+                        continue
 
-                x_c, y_c = [x_c + x, y_c + y]
-                x_c, y_c = [x_c / 7, y_c / 7]
+                    if not no_suppress and class_score_bbox < thresh2:
+                        continue
 
-                x_1 = (x_c - (w / 2)) * 448
-                y_1 = (y_c - (h / 2)) * 448
-                x_2 = (x_c + (w / 2)) * 448
-                y_2 = (y_c + (h / 2)) * 448
+                    drawn = True
 
-                input_image_draw.rectangle([x_1, y_1, x_2, y_2], outline="red", width=3)
-                input_image_draw.text([x_1 + 5, y_1 + 5], text=str(class_score_bbox), fill='yellow')
-                input_image_draw.text([x_1 + 5, y_1 + 13], text=train_data.GetLabelName(class_id), fill='yellow')
+                    print("batch, y, x, anchor_id: ", batch, y, x, anchor_id)
+                    (t_x, t_y, t_w, t_h) = bbox[batch][y][x][anchor_id]
 
-        input_image_pil.show(title="Sample Image")
+                    diff = (1 / 13 * 416)
 
-# result: 1 * 7 * 7 * 30
-SAVE_AS_CHECKPOINT_FILENAME = None
-CHECKPOINT_FILENAME = "yolov2.hdf5"
+                    x_c = sigmoid(t_x) + (x * diff)
+                    y_c = sigmoid(t_y) + (y * diff)
+                    w = ANCHOR_BOXES[2 * anchor_id] * np.exp(t_w)
+                    h = ANCHOR_BOXES[2 * anchor_id + 1] * np.exp(t_h)
+
+                    # x_c, y_c = [x_c + x, y_c + y]
+                    # x_c, y_c = [x_c / 7, y_c / 7]
+
+                    x_1 = (x_c - (w / 2))
+                    y_1 = (y_c - (h / 2))
+                    x_2 = (x_c + (w / 2))
+                    y_2 = (y_c + (h / 2))
+
+                    input_image_draw.rectangle([x_1, y_1, x_2, y_2], outline="red", width=3)
+                    input_image_draw.text([x_1 + 5, y_1 + 5], text=str(class_score_bbox), fill='yellow')
+                    input_image_draw.text([x_1 + 5, y_1 + 13], text=train_data.GetLabelName(class_id), fill='yellow')
+
+        if drawn:
+            input_image_pil.show()
+
 
 MODEL_SAVE = True
-MODE_TRAIN = True
-INTERACTIVE_TRAIN = False
-LOAD_WEIGHT = False
+MODE_TRAIN = False
+INTERACTIVE_TRAIN = True
+LOAD_WEIGHT = True
 
 train_data = Yolov2Dataloader(file_name='manifest-train.txt', numClass=20, batch_size=8, augmentation=True)
-train_data_no_augmentation = Yolov2Dataloader(file_name='manifest-train.txt', numClass=20, batch_size=32, augmentation=False)
+train_data_no_augmentation = Yolov2Dataloader(file_name='manifest-train.txt', numClass=20, batch_size=32,
+                                              augmentation=False)
 valid_train_data = Yolov2Dataloader(file_name='manifest-valid.txt', numClass=20, batch_size=2)
 test_data = Yolov2Dataloader(file_name='manifest-test.txt', numClass=20, batch_size=2)
 
-dev_2 = Yolov2Dataloader(file_name='manifest-2.txt', numClass=20, batch_size=8, augmentation=False)
+dev_2 = Yolov2Dataloader(file_name='manifest-2.txt', numClass=20, batch_size=2, augmentation=False)
+dev_16 = Yolov2Dataloader(file_name='manifest-16.txt', numClass=20, batch_size=16, augmentation=False)
 
 TARGET_TRAIN_DATA = dev_2
-# valid_train_data = TARGET_TRAIN_DATA
 
-LOG_NAME = "2items"
+LOG_NAME = "v3-2items-500epochs-lr0.0001-decay0.00001"
 
-GLOBAL_EPOCHS = 500
-# SAVE_PERIOD_EPOCHS = 100
-SAVE_PERIOD_SAMPLES = len(TARGET_TRAIN_DATA.image_list) * 1 # 1 epoch
+CHECKPOINT_SAVE_DIR = "D:\\ModelCheckpoints\\2020-yolov2-impl\\"
+LOAD_CHECKPOINT_FILENAME = CHECKPOINT_SAVE_DIR + "20200410-110304-weights.epoch200-loss0.97.hdf5"
+CHECKPOINT_TIMESTAMP = datetime.datetime.now().strftime("%Y%m%d-%H%M%S-")
+
+GLOBAL_EPOCHS = 1000
+SAVE_PERIOD_SAMPLES = len(TARGET_TRAIN_DATA.image_list) * 1000  # 20 epoch
 
 '''
     Learning Rate에 대한 고찰
@@ -115,7 +128,7 @@ SAVE_PERIOD_SAMPLES = len(TARGET_TRAIN_DATA.image_list) * 1 # 1 epoch
     - 1e-5: 20 언저리까지 떨어진 이후
     - Augmentation 비활성화 시, 시작부터 5e-6: 23까지는 잘 떨어짐
 '''
-LEARNING_RATE = 1e-4
+LEARNING_RATE = 3e-3  # ref: 1e-4
 DECAY_RATE = 1e-5
 thresh1 = 0.2
 thresh2 = 0.2
@@ -126,11 +139,19 @@ model.compile(optimizer=optimizer, loss=Yolov2Loss)
 
 # model.summary()
 
-save_frequency_raw = SAVE_PERIOD_SAMPLES * 5
+save_frequency_raw = SAVE_PERIOD_SAMPLES
 print("Save frequency is {} sample, batch_size={}.".format(save_frequency_raw, TARGET_TRAIN_DATA.batch_size))
 
-save_best_model = ModelCheckpoint(
-    SAVE_AS_CHECKPOINT_FILENAME if SAVE_AS_CHECKPOINT_FILENAME is not None else CHECKPOINT_FILENAME,
+if LOAD_WEIGHT and (LOAD_CHECKPOINT_FILENAME is not None):
+    model.load_weights(LOAD_CHECKPOINT_FILENAME)
+
+if LOG_NAME is not None:
+    log_dir = "logs\\" + LOG_NAME + datetime.datetime.now().strftime("-%Y%m%d-%H%M%S")
+else:
+    log_dir = "logs\\fit\\" + datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
+
+model_checkpoint = ModelCheckpoint(
+    CHECKPOINT_SAVE_DIR + CHECKPOINT_TIMESTAMP + 'weights.epoch{epoch:02d}-loss{loss:.2f}.hdf5',
     save_best_only=True,
     save_weights_only=True,
     monitor='loss',
@@ -138,14 +159,6 @@ save_best_model = ModelCheckpoint(
     # save_freq=save_frequency
     save_freq=save_frequency_raw
 )
-
-if LOAD_WEIGHT:
-    model.load_weights(CHECKPOINT_FILENAME)
-
-if LOG_NAME is not None:
-    log_dir = "logs\\" + LOG_NAME
-else:
-    log_dir = "logs\\fit\\" + datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
 
 tensor_board = TensorBoard(
     log_dir=log_dir,
@@ -171,17 +184,17 @@ if MODE_TRAIN:
 
             image, _ = TARGET_TRAIN_DATA.__getitem__(random.randrange(0, TARGET_TRAIN_DATA.__len__()))
             result = model.predict(image)
-            display_result_image_v2(image, result, no_suppress=True, display_all=False)
+            display_result_image_v2(image, result, no_suppress=False, display_all=False)
+            # display_result_image_v2(image, result, no_suppress=False, display_all=True)
 
             model.fit(
                 TARGET_TRAIN_DATA,
                 epochs=int(GLOBAL_EPOCHS / epoch_divide_by),
                 # validation_data=valid_train_data,
                 shuffle=False,
-                callbacks=[save_best_model, tensor_board],
+                callbacks=[model_checkpoint, tensor_board],
                 verbose=1
             )
-
 
             epoch_iteration += 1
     else:
@@ -190,7 +203,7 @@ if MODE_TRAIN:
             epochs=GLOBAL_EPOCHS,
             # validation_data=valid_train_data,
             shuffle=False,
-            callbacks=[save_best_model, tensor_board],
+            callbacks=[model_checkpoint, tensor_board],
             verbose=1
         )
 else:
@@ -198,7 +211,6 @@ else:
 
     data_iterations = 8
     for _ in range(data_iterations):
-        image, label = test_data.__getitem__(random.randrange(0, test_data.__len__()))
+        image, label = TARGET_TRAIN_DATA.__getitem__(random.randrange(0, TARGET_TRAIN_DATA.__len__()))
         result = model.predict(image)
-        # postprocess_calculate_precision(result, label)
-        display_result_image_v2(image, result, no_suppress=False)
+        display_result_image_v2(image, result, no_suppress=True)
