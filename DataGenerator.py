@@ -26,7 +26,7 @@ class Labeler():
                 idx += 1
 
     def get_name(self, index):
-        return self.names_list[index]
+        return self.names_list[index].replace("\n", "")
 
 
 # Necessary directives
@@ -213,7 +213,8 @@ class Yolov2Dataloader(utils.Sequence):
                     c
                 ]))
             else:
-                print("Skipping labeling ... two or more bbox in same cell")
+                # print("Skipping labeling ... two or more bbox in same cell")
+                pass
 
         return label, np.array(raw_label)
 

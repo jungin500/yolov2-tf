@@ -1,6 +1,6 @@
 from tensorflow.keras import Model
 from tensorflow.keras.layers import Conv2D, MaxPool2D, GlobalAveragePooling2D, Dense, BatchNormalization, Input, \
-    LeakyReLU, Reshape, Flatten, Softmax, Lambda, Concatenate
+    LeakyReLU, Reshape, Flatten, Softmax, Lambda, Concatenate, UpSampling3D
 
 import tensorflow as tf
 
@@ -97,6 +97,5 @@ def Yolov2Model():
     x = Conv2D(filters=125, kernel_size=1, padding='same', name='conv_l8', use_bias=False)(x)
     x = Reshape((13, 13, 5, 25))(x)  # 결과값: 13 * 13 * 5 * 25
 
-    # model = Model(inputs=[inputs, TrueBox], outputs=x)
     model = Model(inputs=inputs, outputs=x)
     return model
