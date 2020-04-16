@@ -156,13 +156,13 @@ def Yolov2Loss(y_true, y_pred):
     # Loss 함수 3번 (without lambda_noobj)
     object_loss = anchor_mask * responsible_mask * K.square(1 - predict_bbox_confidences)
     # Loss 함수 4번 (with lambda_noobj 0.5)
-    no_object_loss = 0.5 * (1 - anchor_mask * responsible_mask) * K.square(0 - predict_bbox_confidences)
+    no_object_loss = 0.5 * (1 - anchor_mask * responsible_mask) * K.square(predict_bbox_confidences)
 
     # tf.print("- no_object_loss:", tf.reduce_sum(no_object_loss), output_stream=sys.stdout)
     # tf.print("- object_loss:", tf.reduce_sum(object_loss), output_stream=sys.stdout)
 
     confidence_loss = no_object_loss + object_loss
-    confidence_loss = 5 * K.sum(confidence_loss)
+    confidence_loss = K.sum(confidence_loss)
 
     # Loss 함수 5번
     # class_loss = responsible_mask * K.square(label_class - predict_class)

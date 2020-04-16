@@ -8,7 +8,7 @@ os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
 
 from tensorflow.keras.callbacks import ModelCheckpoint, TensorBoard, EarlyStopping
 from tensorflow.keras.optimizers import Adam
-from YoloLoss import Yolov2Loss, DummyLoss, ANCHOR_BOXES, cell_offset_table
+from YoloLoss import Yolov2Loss, ANCHOR_BOXES
 from YoloModel import Yolov2Model
 from DataGenerator import Yolov2Dataloader
 
@@ -86,7 +86,7 @@ def check_if_responsible_cell_anchor(x, y, anchor_id, parsed_gt):
 def display_result_image_v2(input_image, network_output, label, data_generator, no_suppress=False, display_all=True, display_by_anchors=False):
     classes = network_output[..., :20]  # ? * 13 * 13 * 5 * 20
     bbox = network_output[..., 20:24]  # ? * 13 * 13 * 5 * 4
-    confidence = network_output[..., 24]  # ? * 13 * 13 * 5
+    confidence = tf.sigmoid(network_output[..., 24])  # ? * 13 * 13 * 5
 
     class_score_bbox = np.expand_dims(confidence, axis=4) * classes  # ? * 13 * 13 * 5 * 20
 
@@ -153,11 +153,11 @@ def display_result_image_v2(input_image, network_output, label, data_generator, 
                     class_id = class_score_bbox_max_class[batch][y][x][anchor_id]
                     class_score_bbox = class_score_bbox_max_score[batch][y][x][anchor_id]
 
-                    # if not no_suppress and class_score_bbox_max_score[batch][y][x][anchor_id] == 0:
-                    #     continue
-                    #
-                    # if not no_suppress and class_score_bbox < thresh2:
-                    #     continue
+                    if not no_suppress and class_score_bbox_max_score[batch][y][x][anchor_id] == 0:
+                        continue
+
+                    if not no_suppress and class_score_bbox < thresh2:
+                        continue
 
                     # Confidence를 그린다.
                     confidence_value = int(confidence[batch][y][x][anchor_id] * 100) / 100
@@ -214,7 +214,7 @@ MODE_TRAIN = True
 INTERACTIVE_TRAIN = False
 LOAD_WEIGHT = False
 
-train_data = Yolov2Dataloader(file_name='manifest-train.txt', numClass=20, batch_size=8, augmentation=True)
+train_data = Yolov2Dataloader(file_name='manifest-train.txt', numClass=20, batch_size=32, augmentation=True)
 train_data_no_augmentation = Yolov2Dataloader(file_name='manifest-train.txt', numClass=20, batch_size=32,
                                               augmentation=False)
 valid_train_data = Yolov2Dataloader(file_name='manifest-valid.txt', numClass=20, batch_size=2)
@@ -224,16 +224,16 @@ dev_1 = Yolov2Dataloader(file_name='manifest-1.txt', numClass=20, batch_size=1, 
 dev_2 = Yolov2Dataloader(file_name='manifest-2.txt', numClass=20, batch_size=2, augmentation=False)
 dev_16 = Yolov2Dataloader(file_name='manifest-16.txt', numClass=20, batch_size=16, augmentation=False)
 
-TARGET_TRAIN_DATA = dev_16
+TARGET_TRAIN_DATA = train_data_no_augmentation
 
-LOG_NAME = "16items-1000epochs-lr0.0003-decay0.00001"
+LOG_NAME = "all-items-augm-500epoches-lr0.005-decay0.00001"
 
 CHECKPOINT_SAVE_DIR = "D:\\ModelCheckpoints\\2020-yolov2-impl\\"
-LOAD_CHECKPOINT_FILENAME = CHECKPOINT_SAVE_DIR + "20200414-113121-weights.epoch4000-loss0.00.hdf5"
+LOAD_CHECKPOINT_FILENAME = CHECKPOINT_SAVE_DIR + "20200414-143027-weights.epoch1000-loss1.94.hdf5"
 CHECKPOINT_TIMESTAMP = datetime.datetime.now().strftime("%Y%m%d-%H%M%S-")
 
-GLOBAL_EPOCHS = 1000
-SAVE_PERIOD_SAMPLES = len(TARGET_TRAIN_DATA.image_list) * 500  # 500 epoch
+GLOBAL_EPOCHS = 500
+SAVE_PERIOD_SAMPLES = len(TARGET_TRAIN_DATA.image_list) * 5  # 5 epoch
 
 '''
     Learning Rate에 대한 고찰
@@ -277,7 +277,7 @@ model_checkpoint = ModelCheckpoint(
 tensor_board = TensorBoard(
     log_dir=log_dir,
     write_graph=True,
-    update_freq=94,
+    update_freq=5,
     profile_batch=0
 )
 
@@ -299,8 +299,8 @@ if MODE_TRAIN:
             model.fit(
                 TARGET_TRAIN_DATA,
                 epochs=int(GLOBAL_EPOCHS / epoch_divide_by),
-                # validation_data=valid_train_data,
-                shuffle=False,
+                validation_data=valid_train_data,
+                shuffle=True,
                 callbacks=[model_checkpoint, tensor_board],
                 verbose=1
             )
@@ -314,8 +314,8 @@ if MODE_TRAIN:
         model.fit(
             TARGET_TRAIN_DATA,
             epochs=GLOBAL_EPOCHS,
-            # validation_data=valid_train_data,
-            shuffle=False,
+            validation_data=valid_train_data,
+            shuffle=True,
             callbacks=[model_checkpoint, tensor_board],
             verbose=1
         )
@@ -326,4 +326,4 @@ else:
     for _ in range(data_iterations):
         image, label = TARGET_TRAIN_DATA.__getitem__(random.randrange(0, TARGET_TRAIN_DATA.__len__()))
         result = model.predict(image)
-        display_result_image_v2(image, result, label, TARGET_TRAIN_DATA, no_suppress=True, display_all=True, display_by_anchors=True)
+        display_result_image_v2(image, result, label, TARGET_TRAIN_DATA, no_suppress=False, display_all=False, display_by_anchors=False)
