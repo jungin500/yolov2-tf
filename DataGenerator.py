@@ -135,7 +135,7 @@ class Yolov2Dataloader(utils.Sequence):
             grid_x_index = int((center_x / 416) // scale_factor)
             grid_y_index = int((center_y / 416) // scale_factor)
             grid_x_index, grid_y_index = \
-                np.clip([grid_x_index, grid_y_index], a_min=0, a_max=6)
+                np.clip([grid_x_index, grid_y_index], a_min=0, a_max=13 - 1)
 
             if label[grid_y_index][grid_x_index][anchor_idx][class_id] == 0.:
                 label[grid_y_index][grid_x_index][anchor_idx][class_id] = 1.
